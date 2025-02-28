@@ -1,4 +1,5 @@
-## [CVPR'24 Highlight] HOLD: Category-agnostic 3D Reconstruction of Interacting Hands and Objects from Video
+# Changing HOLD to 3D GS
+## HOLD: Category-agnostic 3D Reconstruction of Interacting Hands and Objects from Video
 ### 👉I plan to enter the job market in Summer/Fall 2025. If you have an openning, feel free to [email](https://zc-alexfan.github.io/)!👈
 
 
