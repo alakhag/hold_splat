@@ -1,0 +1,4 @@
+# ninja log v5
+0	9718	1737939229644595186	/home/alakhaggarwal/nerf-gs/gaussian-splatting/submodules/simple-knn/build/temp.linux-x86_64-cpython-310/simple_knn.o	5fa4aab8c7120372
+0	15549	1737939235472642648	/home/alakhaggarwal/nerf-gs/gaussian-splatting/submodules/simple-knn/build/temp.linux-x86_64-cpython-310/ext.o	c4ba0933da422f85
+0	44632	1737939264548880962	/home/alakhaggarwal/nerf-gs/gaussian-splatting/submodules/simple-knn/build/temp.linux-x86_64-cpython-310/spatial.o	16c1a6e6f59c866f
