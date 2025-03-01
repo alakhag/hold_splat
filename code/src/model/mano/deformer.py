@@ -50,7 +50,7 @@ class KNNDeformer:
         self.verts = output["verts"]
         self.skin_weights = output["skin_weights"]
 
-    def forward(self, x, tfs, return_weights=True, inverse=False, verts=None):
+    def forward(self, x, tfs, return_weights=True, inverse=False, verts=None, return_tfs=False):
         """
         # transform query points from one space to another given tfs
 
@@ -84,6 +84,9 @@ class KNNDeformer:
         if return_weights:
             return weights
         x_transformed = skinning(x, weights, tfs, inverse=inverse)
+        T = torch.einsum("bpn,bnij->bpij", weights, tfs)
+        if return_tfs:
+            return x_transformed, outlier_mask, T
         return x_transformed, outlier_mask
 
     def forward_skinning(self, xc, cond, tfs):

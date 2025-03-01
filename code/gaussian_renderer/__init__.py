@@ -21,7 +21,7 @@ def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0
     """
  
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0 # pc.xyz, pc.xyz.type
     try:
         screenspace_points.retain_grad()
     except:
@@ -40,7 +40,7 @@ def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform,
         projmatrix=viewpoint_camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
+        sh_degree=pc.active_sh_degree, # pc.active_sh_degree= 3?
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=False,
@@ -49,9 +49,9 @@ def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-    means3D = pc.get_xyz
+    means3D = pc.get_xyz # pc.xyz
     means2D = screenspace_points
-    opacity = pc.get_opacity
+    opacity = pc.get_opacity # pc.opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -59,8 +59,8 @@ def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0
     rotations = None
     cov3D_precomp = None
 
-    scales = pc.get_scaling
-    rotations = pc.get_rotation
+    scales = pc.get_scaling # pc.scale
+    rotations = pc.get_rotation # pc.rotation
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -70,7 +70,7 @@ def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0
         if separate_sh:
             dc, shs = pc.get_features_dc, pc.get_features_rest
         else:
-            shs = pc.get_features
+            shs = pc.get_features # pc.features
     else:
         colors_precomp = override_color
 
@@ -109,7 +109,7 @@ def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0
         
     # Apply exposure to rendered image (training only)
     if use_trained_exp:
-        exposure = pc.get_exposure_from_name(viewpoint_camera.image_name)
+        exposure = pc.get_exposure_from_name(viewpoint_camera.image_name) # pc.exposure
         rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.

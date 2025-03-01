@@ -132,94 +132,29 @@ class ObjectNode(Node):
         self.mesh_o = index_vertices_by_faces(self.mesh_vo_cano, self.mesh_fo_cano)
 
 class ObjectSplats(Splats):
-    def __init__(self, seq_name, node_id):
+    def __init__(self, seq_name, node_id, num_frames):
         deformer = ObjectDeformer()
         server = ObjectServer(seq_name, None)
         class_id = 1
         super(ObjectSplats, self).__init__(deformer=deformer, server=server, node_id=node_id, class_id=class_id)
-        # self.frame_latent_encoder = nn.Embedding(args.n_images, time_code_dim)
-        self.mesh_o = None
-        v3d_cano = server.object_model.v3d_cano.cpu().detach().numpy()
-        self.v_min_max = np.array([v3d_cano.min(axis=0), v3d_cano.max(axis=0)]) * 2.0
+        self.load_pcd()
+        self.gen_from_pcd(num_frames)
 
-    def forward(self, input):
-        time_code = self.frame_latent_encoder(input["idx"])
-        input["time_code"] = time_code
-        return super().forward(input)
-
-    def sample_points(self, input):
-        node_id = self.node_id
-        scene_scale = input[f"{node_id}.params"][:, 0]
+    def deform(self, input):
+        scene_scale = 1.0
         obj_pose = input[f"{node_id}.global_orient"]
         obj_trans = input[f"{node_id}.transl"]
         obj_output = self.server(scene_scale, obj_trans, obj_pose)
 
-        if self.args.debug:
-            out = {}
-            out["verts"] = obj_output["verts"]
-            out["idx"] = input["idx"]
-            debug.debug_world2pix(self.args, out, input, self.node_id)
+        tfs = obj_output["obj_tfs"][:, 0]
+        x_c = self._xyz.unsqueeze(0).expand(tfs.shape[0], -1, -1)
+        x, _ = self.deformer(x_c, tfs, return_weights=False, inverse=False, verts=None)
+        rots = self._rotation
+        base_rots_mat = quat_to_rotmat(rots)  # (N, 3, 3)
+        base_rots_mat = base_rots_mat.unsqueeze(0).expand(B, -1, -1, -1)
+        tfs_rot = tfs[:, :3, :3]
+        new_rots_mat = torch.matmul(tfs_rot.unsqueeze(1), base_rots_mat)  # (B, N, 3, 3)
+        new_rots = rotmat_to_quat(new_rots_mat)  # (B, N, 4)
 
-        obj_cond = {"pose": obj_pose[:, 3:] / np.pi}
-        ray_dirs, cam_loc = get_camera_params(
-            input["uv"], input["extrinsics"], input["intrinsics"]
-        )
-        batch_size, num_pixels, _ = ray_dirs.shape
-        cam_loc = cam_loc.unsqueeze(1).repeat(1, num_pixels, 1).reshape(-1, 3)
-        ray_dirs = ray_dirs.reshape(-1, 3)
-
-        deform_info = {
-            "cond": obj_cond,
-            "tfs": obj_output["obj_tfs"][:, 0],
-        }
-        if self.is_test:
-            deform_info["verts"] = obj_output["obj_verts"]
-
-        z_vals = self.ray_sampler.get_z_vals(
-            volsdf_utils.sdf_func_with_deformer,
-            self.deformer,
-            self.implicit_network,
-            ray_dirs,
-            cam_loc,
-            self.density,
-            self.training,
-            deform_info,
-        )
-
-        # fg samples to points
-        points = cam_loc.unsqueeze(1) + z_vals.unsqueeze(2) * ray_dirs.unsqueeze(1)
-        out = {}
-        out["idx"] = input["idx"]
-        out["obj_output"] = obj_output
-        out["cond"] = obj_cond
-        out["ray_dirs"] = ray_dirs
-        out["cam_loc"] = cam_loc
-        out["deform_info"] = deform_info
-        out["z_vals"] = z_vals
-        out["points"] = points
-        out["tfs"] = obj_output["obj_tfs"]
-        out["batch_size"] = batch_size
-        out["num_pixels"] = num_pixels
-        return out
-
-    def meshing_cano(self):
-        cond = {"pose": torch.zeros(1, self.specs.pose_dim).float().cuda()}
-        mesh_canonical = generate_mesh(
-            lambda x: hold_utils.query_oc(self.implicit_network, x, cond),
-            self.v_min_max,
-            point_batch=10000,
-            res_up=2,
-        )
-        self.update_cano(mesh_canonical)
-        return mesh_canonical
-
-    def update_cano(self, mesh_canonical):
-        self.mesh_vo_cano = torch.tensor(
-            mesh_canonical.vertices[None],
-            device="cuda",
-        ).float()
-        self.mesh_fo_cano = torch.tensor(
-            mesh_canonical.faces.astype(np.int64),
-            device="cuda",
-        )
-        self.mesh_o = index_vertices_by_faces(self.mesh_vo_cano, self.mesh_fo_cano)
+        return x, new_rots
+    

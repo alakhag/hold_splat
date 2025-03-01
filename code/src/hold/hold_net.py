@@ -198,15 +198,14 @@ class SplatNet:
         self.background = None
         node_dict = {}
         if betas_r is not None:
-            self.right_node = MANOSplats(betas_r, "right")
+            self.right_node = MANOSplats(betas_r, "right", args.n_images)
 
         if betas_l is not None:
-            self.left_node = MANOSplats(betas_l, "left")
+            self.left_node = MANOSplats(betas_l, "left", args.n_images)
 
-        self.object_node = ObjectSplats(args.case, "object")
-        self.background = BackgroundSplats(opt, args, num_frames, self.sdf_bounding_sphere)
-
-        self.init_network()
+        self.object_node = ObjectSplats(args.case, "object", args.n_images)
+        self.bg_node = BackgroundSplats(args.case, "bg", args.n_images)
+        # self.background = BackgroundSplats(opt, args, num_frames, self.sdf_bounding_sphere)
 
     def forward_fg(self, input):
         input = xdict(input)
@@ -223,8 +222,12 @@ class SplatNet:
         #     factors, sample_dict = node(input)
         #     factors_dicts[node.node_id] = factors
         #     sample_dicts[node.node_id] = sample_dict
-        self.right_node(input)
-        self.object_node(input)
+        factors = self.right_node(input)
+        factors_dicts["right"] = factors
+        factors = self.object_node(input)
+        factors_dicts["object"] = factors
+        factors = self.bg_node(input)
+        factors_dicts["bg"] = factors
 
         # compute canonical SDF and features
         out_dict = self.prepare_loss_targets(out_dict, sample_dicts)
@@ -288,24 +291,6 @@ class SplatNet:
             out_dict["bg_rgb_only"] = bg_dict["bg_rgb_only"]
             out_dict["instance_map"] = torch.argmax(out_dict["semantics"], dim=1)
         return out_dict
-
-    def init_network(self):
-        if self.args.shape_init != "":
-            model_state = torch.load(
-                f"./saved_models/{self.args.shape_init}/checkpoints/last.ckpt"
-            )
-            sd = model_state["state_dict"]
-            sd = {
-                k.replace("model.", ""): v
-                for k, v in sd.items()
-                if "implicit_network" in k
-                and "bg_implicit_network." not in k
-                and ".embedder_obj." not in k
-            }
-            logger.warning("Using MANO init that is for h2o, not the one in CVPR.")
-            self.load_state_dict(sd, strict=False)
-        else:
-            logger.warning("Skipping INIT human models!")
 
     def prepare_loss_targets(self, out_dict, sample_dicts):
         if not self.training:

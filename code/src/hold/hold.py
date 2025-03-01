@@ -364,13 +364,6 @@ class HOLDSplat(pl.LightningModule):
         loss_output = self.loss(batch, model_outputs)
         if self.global_step % self.args.log_every == 0:
             self.metrics(model_outputs, batch, self.global_step, self.current_epoch)
-            # comet_utils.log_dict(
-            #     self.args.experiment,
-            #     loss_output,
-            #     step=self.global_step,
-            #     epoch=self.current_epoch,
-            # )
-
         loss = loss_output["loss"]
         self.training_step_outputs.append(loss)
         self.log("loss", loss)

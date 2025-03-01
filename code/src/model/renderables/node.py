@@ -1,7 +1,9 @@
 import torch.nn as nn
+import numpy as np
 
 import src.engine.volsdf_utils as volsdf_utils
 from src.engine.rendering import render_color
+from src.utils.eval_sh import SH2RGB, RGB2SH
 
 from ...engine.density import LaplaceDensity
 from ...engine.ray_sampler import ErrorBoundSampler
@@ -9,6 +11,7 @@ from ...networks.shape_net import ImplicitNet
 from ...networks.texture_net import RenderingNet
 
 from gaussian_renderer import render
+from simple_knn._C import distCUDA2
 from typing import NamedTuple
 import trimesh
 
@@ -294,9 +297,9 @@ class Splats:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-        self.exposure_mapping = {cam_info.image_name: idx for idx, cam_info in enumerate(cam_infos)}
+        self.exposure_mapping = {"{:04d}".format(cam_info): idx for idx, cam_info in enumerate(range(cam_infos))}
         self.pretrained_exposures = None
-        exposure = torch.eye(3, 4, device="cuda")[None].repeat(len(cam_infos), 1, 1)
+        exposure = torch.eye(3, 4, device="cuda")[None].repeat(cam_infos, 1, 1)
         self._exposure = nn.Parameter(exposure.requires_grad_(True))
 
     def training_setup(self, training_args):
@@ -440,7 +443,30 @@ class Splats:
     def load_pcd(self):
         print (f"Generating random points for {self.node_id}")
         num_pts = 30_000
-        
+        if self.node_id in ["right", "left", "object"]:
+            sample_pts = trimesh.sample.sample_surface_sphere(num_pts)*0.5
+            if self.node_id in ["right", "left"]:
+                sample_pts[:,2] += 0.1
+            else:
+                sample_pts[:,2] -= 0.1
+            xyz = sample_pts
+            shs = np.random.random((num_pts, 3)) / 255.0
+            # Compute default normals as normalized xyz
+            norms = np.linalg.norm(xyz, axis=1, keepdims=True)
+            norms[norms == 0] = 1
+            normals = xyz / norms
+            self.pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=normals)
+        else:
+            sample_pts = trimesh.sample.volume_rectangular((2,2,2), num_pts)
+            xyz = sample_pts
+            shs = np.random.random((num_pts, 3)) / 255.0
+            normals = np.zeros_like(xyz)
+            normals[:,2] = 1
+            self.pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=normals)
+
+    def gen_from_pcd(self, cam_infos, spatial_lr_scale=1.0):
+        pcd = self.pcd
+        self.create_from_pcd(pcd, cam_infos, spatial_lr_scale)
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -755,3 +781,10 @@ class Splats:
         # totals = np.array(totals)
         # print ("Max: ", np.max(totals), "Min: ", np.min(totals), "Mean: ", np.mean(totals), "Std: ", np.std(totals))
         # print (lamda.min(), lamda.max())
+
+    def forward (self, input):
+        x, rots = self.deform(input)
+        opa = self._opacity.unsqueeze(0).expand(x.shape[0], -1, -1)
+        scale = self._scaling.unsqueeze(0).expand(x.shape[0], -1, -1)
+        feats = self.get_features.unsqueeze(0).expand(x.shape[0], -1, -1)
+        return x, rots, opa, scale, feats
