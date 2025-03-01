@@ -13,6 +13,7 @@ import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 
+# def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False):
 def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False):
     """
     Render the scene. 
@@ -40,7 +41,7 @@ def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform,
         projmatrix=viewpoint_camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree, # pc.active_sh_degree= 3?
+        sh_degree=3, # pc.active_sh_degree= 3?
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=False,
@@ -74,16 +75,6 @@ def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0
     else:
         colors_precomp = override_color
 
-    # print ("shs")
-    # print (shs)
-    # print ("colors_precomp")
-    # print (colors_precomp)
-    # print ("dc")
-    # print (dc)
-    # print ("cov3D_precomp")
-    # print (cov3D_precomp)
-    # exit()
-
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     if separate_sh:
         rendered_image, radii, depth_image = rasterizer(
@@ -106,11 +97,6 @@ def render(viewpoint_camera, pc, bg_color : torch.Tensor, scaling_modifier = 1.0
             scales = scales,
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
-        
-    # Apply exposure to rendered image (training only)
-    if use_trained_exp:
-        exposure = pc.get_exposure_from_name(viewpoint_camera.image_name) # pc.exposure
-        rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.

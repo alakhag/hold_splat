@@ -5,179 +5,16 @@ import torch.nn as nn
 from loguru import logger
 
 
-from src.model.renderables.background import Background, BackgroundSplats
-from src.model.renderables.object_node import ObjectNode, ObjectSplats
-from src.model.renderables.mano_node import MANONode, MANOSplats
+from src.model.renderables.background import BackgroundSplats
+from src.model.renderables.object_node import ObjectSplats
+from src.model.renderables.mano_node import MANOSplats
+from utils.eval_sh import RGB2SH, SH2RGB
 
 sys.path = [".."] + sys.path
 from common.xdict import xdict
 
-import src.hold.hold_utils as hold_utils
-
-
-from src.hold.hold_utils import prepare_loss_targets_hand
-from src.hold.hold_utils import prepare_loss_targets_object
-from src.hold.hold_utils import volumetric_render
-
-
-class HOLDNet(nn.Module):
-    def __init__(
-        self,
-        opt,
-        betas_r,
-        betas_l,
-        num_frames,
-        args,
-    ):
-        super().__init__()
-        self.args = args
-        self.opt = opt
-        self.sdf_bounding_sphere = opt.scene_bounding_sphere
-        self.threshold = 0.05
-        node_dict = {}
-        if betas_r is not None:
-            right_node = MANONode(args, opt, betas_r, self.sdf_bounding_sphere, "right")
-            node_dict["right"] = right_node
-
-        if betas_l is not None:
-            left_node = MANONode(args, opt, betas_l, self.sdf_bounding_sphere, "left")
-            node_dict["left"] = left_node
-
-        object_node = ObjectNode(args, opt, self.sdf_bounding_sphere, "object")
-        node_dict["object"] = object_node
-        self.nodes = nn.ModuleDict(node_dict)
-        self.background = Background(opt, args, num_frames, self.sdf_bounding_sphere)
-
-        self.init_network()
-
-    def forward_fg(self, input):
-        input = xdict(input)
-        out_dict = xdict()
-        if self.training:
-            out_dict["epoch"] = input["current_epoch"]
-            out_dict["step"] = input["global_step"]
-
-        torch.set_grad_enabled(True)
-        sample_dict = None
-        factors_dicts = {}
-        sample_dicts = {}
-        for node in self.nodes.values():
-            factors, sample_dict = node(input)
-            factors_dicts[node.node_id] = factors
-            sample_dicts[node.node_id] = sample_dict
-
-        import src.utils.debug as debug
-
-        debug.debug_deformer(sample_dicts, self)
-
-        # compute canonical SDF and features
-        out_dict = self.prepare_loss_targets(out_dict, sample_dicts)
-
-        factors_list = list(factors_dicts.values())
-        factors = hold_utils.merge_factors(factors_list, check=True)
-
-        for myfactors in factors_dicts.values():
-            myfactors["z_max"] = myfactors["z_vals"][:, -1]
-
-        # volumetric rendering: all
-        comp_out_dict = volumetric_render(factors, self.training)
-        out_dict.merge(comp_out_dict)
-
-        for node_id, myfactors in factors_dicts.items():
-            my_out_dict = volumetric_render(myfactors, self.training)
-            out_dict.merge(my_out_dict.prefix(f"{node_id}."))
-
-        # background
-        bg_z_vals = self.background.inverse_sphere_sampler.inverse_sample(
-            sample_dict["ray_dirs"],
-            sample_dict["cam_loc"],
-            self.training,
-            self.sdf_bounding_sphere,
-        )
-        out_dict["bg_z_vals"] = bg_z_vals
-        out_dict["ray_dirs"] = sample_dict["ray_dirs"]
-        out_dict["cam_loc"] = sample_dict["cam_loc"]
-        out_dict["index"] = input["idx"]
-
-        return out_dict
-
-    def step_embedding(self):
-        # step on BARF counter
-        for node in self.nodes.values():
-            node.step_embedding()
-        self.background.step_embedding()
-
-    def forward(self, input):
-        fg_dict = self.forward_fg(input)
-        bg_dict = self.background(
-            fg_dict["bg_weights"],
-            fg_dict["ray_dirs"],
-            fg_dict["cam_loc"],
-            fg_dict["bg_z_vals"],
-            fg_dict["index"],
-        )
-        out_dict = self.composite(fg_dict, bg_dict)
-
-        if self.training:
-            self.step_embedding()
-        return out_dict
-
-    def composite(self, fg_dict, bg_dict):
-        out_dict = fg_dict
-        # Composite foreground and background
-        out_dict["rgb"] = fg_dict["fg_rgb"] + bg_dict["bg_rgb"]
-        out_dict["semantics"] = fg_dict["fg_semantics"] + bg_dict["bg_semantics"]
-
-        if not self.training:
-            out_dict["bg_rgb_only"] = bg_dict["bg_rgb_only"]
-            out_dict["instance_map"] = torch.argmax(out_dict["semantics"], dim=1)
-        return out_dict
-
-    def init_network(self):
-        if self.args.shape_init != "":
-            model_state = torch.load(
-                f"./saved_models/{self.args.shape_init}/checkpoints/last.ckpt"
-            )
-            sd = model_state["state_dict"]
-            sd = {
-                k.replace("model.", ""): v
-                for k, v in sd.items()
-                if "implicit_network" in k
-                and "bg_implicit_network." not in k
-                and ".embedder_obj." not in k
-            }
-            logger.warning("Using MANO init that is for h2o, not the one in CVPR.")
-            self.load_state_dict(sd, strict=False)
-        else:
-            logger.warning("Skipping INIT human models!")
-
-    def prepare_loss_targets(self, out_dict, sample_dicts):
-        if not self.training:
-            return out_dict
-
-        step = out_dict["step"]
-        assert [node.node_id for node in self.nodes.values()] == [
-            key for key in sample_dicts.keys()
-        ]
-
-        if step % 200 == 0 and step > 0:
-            # if True:
-            for node, node_id in zip(self.nodes.values(), sample_dicts):
-                if node.node_id in ["right", "left"]:
-                    node.spawn_cano_mano(sample_dicts[node_id])
-
-        for node in self.nodes.values():
-            node_id = node.node_id
-            sample_dict = sample_dicts[node_id]
-            if "right" in node_id or "left" in node_id:
-                prepare_loss_targets_hand(out_dict, sample_dict, node)
-            elif "object" in node_id:
-                prepare_loss_targets_object(out_dict, sample_dict, node)
-            else:
-                raise ValueError(f"Unknown node_id: {node_id}")
-
-        return out_dict
-
+from gaussian_renderer import render
+from copy import deepcopy
 
 class SplatNet:
     def __init__(
@@ -205,9 +42,8 @@ class SplatNet:
 
         self.object_node = ObjectSplats(args.case, "object", args.n_images)
         self.bg_node = BackgroundSplats(args.case, "bg", args.n_images)
-        # self.background = BackgroundSplats(opt, args, num_frames, self.sdf_bounding_sphere)
 
-    def forward_fg(self, input):
+    def forward(self, input):
         input = xdict(input)
         out_dict = xdict()
         if self.training:
@@ -217,11 +53,7 @@ class SplatNet:
         torch.set_grad_enabled(True)
         sample_dict = None
         factors_dicts = {}
-        sample_dicts = {}
-        # for node in self.nodes.values():
-        #     factors, sample_dict = node(input)
-        #     factors_dicts[node.node_id] = factors
-        #     sample_dicts[node.node_id] = sample_dict
+        
         factors = self.right_node(input)
         factors_dicts["right"] = factors
         factors = self.object_node(input)
@@ -229,92 +61,85 @@ class SplatNet:
         factors = self.bg_node(input)
         factors_dicts["bg"] = factors
 
-        # compute canonical SDF and features
-        out_dict = self.prepare_loss_targets(out_dict, sample_dicts)
+        factors_dicts = self.merge(factors_dicts)
 
-        factors_list = list(factors_dicts.values())
-        factors = hold_utils.merge_factors(factors_list, check=True)
+        rgb = self.render(factors_dicts["rgb"], override=False)
+        sem = self.render(factors_dicts["mask"], override=True)
 
-        for myfactors in factors_dicts.values():
-            myfactors["z_max"] = myfactors["z_vals"][:, -1]
+    def get_mask_gs(self, _dict, node_id):
+        features_dc = _dict["features"][:,:,0:1,:]
+        mask_dc = torch.zeros_like(features_dc)
+        if node_id=="right":
+            mask_dc[...,2] = 1.0
+        elif node_id=="object":
+            mask_dc[...,1] = 1.0
+        out["override"] = mask_dc
 
-        # volumetric rendering: all
-        comp_out_dict = volumetric_render(factors, self.training)
-        out_dict.merge(comp_out_dict)
+    def process(self, factors_dict):
+        return {
+            "xyz": factors_dict[0],
+            "rots": factors_dict[1],
+            "opacity": factors_dict[2],
+            "scale": factors_dict[3],
+            "features": factors_dict[4]
+        }
 
-        for node_id, myfactors in factors_dicts.items():
-            my_out_dict = volumetric_render(myfactors, self.training)
-            out_dict.merge(my_out_dict.prefix(f"{node_id}."))
+    def merge(self, factors_dicts):
+        right_dict = self.process(factors_dicts["right"])
+        object_dict = self.process(factors_dicts["object"])
+        bg_dict = self.process(factors_dicts["bg"])
 
-        # background
-        bg_z_vals = self.background.inverse_sphere_sampler.inverse_sample(
-            sample_dict["ray_dirs"],
-            sample_dict["cam_loc"],
-            self.training,
-            self.sdf_bounding_sphere,
-        )
-        out_dict["bg_z_vals"] = bg_z_vals
-        out_dict["ray_dirs"] = sample_dict["ray_dirs"]
-        out_dict["cam_loc"] = sample_dict["cam_loc"]
-        out_dict["index"] = input["idx"]
+        right_dict = self.get_mask_gs(right_dict, "right")
+        object_dict = self.get_mask_gs(object_dict, "object")
+        bg_dict = self.get_mask_gs(bg_dict, "bg")
 
-        return out_dict
+        fg_dict = self.composite(right_dict, object_dict)
+        full_dict = self.composite(fg_dict, bg_dict)
 
-    def step_embedding(self):
-        # step on BARF counter
-        for node in self.nodes.values():
-            node.step_embedding()
-        self.background.step_embedding()
+        return {
+            "right": right_dict,
+            "object": object_dict,
+            "bg": bg_dict,
+            "fg": fg_dict,
+            "rgb": full_dict,
+            "mask": mask_dict
+        }
 
-    def forward(self, input):
-        fg_dict = self.forward_fg(input)
-        bg_dict = self.background(
-            fg_dict["bg_weights"],
-            fg_dict["ray_dirs"],
-            fg_dict["cam_loc"],
-            fg_dict["bg_z_vals"],
-            fg_dict["index"],
-        )
-        out_dict = self.composite(fg_dict, bg_dict)
+    def composite(self, dict1, dict2):
+        out = {}
+        keys = dict1.keys()
+        for k in keys:
+            item1 = dict1[k]
+            item2 = dict2[k]
+            batch_size = item1.shape[0]
+            if item2.shape[0]==1:
+                l = len(item2.shape)
+                expand_shape = [-1]*l
+                expand_shape[0] = batch_size
+                item2 = item2.expand(expand_shape)
+            item = torch.concatenate([item1, item2], dim=1)
+            out[k] = item
+        return out
 
-        if self.training:
-            self.step_embedding()
-        return out_dict
+    def render(self, _dict, override=False):
+        xyz = _dict["xyz"]
+        xyz = xyz.reshape(-1, *xyz.shape[2:])
+        opacity = _dict["opacity"]
+        opacity = opacity.reshape(-1, *xyz.shape[2:])
+        scale = _dict["scale"]
+        scale = scale.reshape(-1, *xyz.shape[2:])
+        rots = _dict["rots"]
+        rots = rots.reshape(-1, *xyz.shape[2:])
+        if override:
+            precomp = _dict["override"]
+            precomp = precomp.reshape(-1, *xyz.shape[2:])
+            return render("viewpoint_camera: FoVx, FoVy, image_height, image_width, world_view_transform, full_proj_transform, camera_center", 
+                {xyz, opacity, scale, rots, None}, 
+                torch.tensor([0,0,0], dtype=torch.float32, device="cuda"), 
+                override_color=precomp, 
+                use_trained_exp=False)
+        else:
+            features = _dict["features"]
+            features = features.reshape(-1, *features.shape[2:])
+            return render("viewpoint_camera", {xyz, opacity, scale, rots, features}, torch.tensor([0,0,0], dtype=torch.float32, device="cuda"), override_color=None, use_trained_exp=False)
 
-    def composite(self, fg_dict, bg_dict):
-        out_dict = fg_dict
-        # Composite foreground and background
-        out_dict["rgb"] = fg_dict["fg_rgb"] + bg_dict["bg_rgb"]
-        out_dict["semantics"] = fg_dict["fg_semantics"] + bg_dict["bg_semantics"]
-
-        if not self.training:
-            out_dict["bg_rgb_only"] = bg_dict["bg_rgb_only"]
-            out_dict["instance_map"] = torch.argmax(out_dict["semantics"], dim=1)
-        return out_dict
-
-    def prepare_loss_targets(self, out_dict, sample_dicts):
-        if not self.training:
-            return out_dict
-
-        step = out_dict["step"]
-        assert [node.node_id for node in self.nodes.values()] == [
-            key for key in sample_dicts.keys()
-        ]
-
-        if step % 200 == 0 and step > 0:
-            # if True:
-            for node, node_id in zip(self.nodes.values(), sample_dicts):
-                if node.node_id in ["right", "left"]:
-                    node.spawn_cano_mano(sample_dicts[node_id])
-
-        for node in self.nodes.values():
-            node_id = node.node_id
-            sample_dict = sample_dicts[node_id]
-            if "right" in node_id or "left" in node_id:
-                prepare_loss_targets_hand(out_dict, sample_dict, node)
-            elif "object" in node_id:
-                prepare_loss_targets_object(out_dict, sample_dict, node)
-            else:
-                raise ValueError(f"Unknown node_id: {node_id}")
-
-        return out_dict
