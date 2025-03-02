@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import src.engine.volsdf_utils as volsdf_utils
 import src.utils.debug as debug
-from src.model.renderables.node import Node, Splats
+from src.model.renderables.node import Splats
 from src.datasets.utils import get_camera_params
 from src.utils.meshing import generate_mesh
 import torch.nn as nn

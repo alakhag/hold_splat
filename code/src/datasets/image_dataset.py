@@ -33,8 +33,6 @@ class ImageDataset(Dataset):
         self.setup_poses(data)
 
         self.debug_dump(args)
-
-        self.num_sample = self.args.num_sample
         self.sampling_strategy = "weighted"
 
     def debug_dump(self, args):
@@ -67,28 +65,6 @@ class ImageDataset(Dataset):
         uv = np.flip(uv, axis=0).copy().transpose(1, 2, 0).astype(np.float32)
         entity_keys = self.params.keys()
         params = {key + ".params": self.params[key][idx] for key in entity_keys}
-        if self.num_sample > 0:
-            hand_types = [key for key in entity_keys if "right" in key or "left" in key]
-            num_sample = self.num_sample // len(hand_types)
-
-            uv_list = []
-            mask_list = []
-            img_list = []
-            for hand_type in hand_types:
-                # sample around mask tight bbox and uniform sampling
-                samples = weighted_sampling(
-                    {"rgb": img, "uv": uv, "obj_mask": mask},
-                    img_size,
-                    num_sample,
-                    hand_type,
-                )[0]
-                uv_list.append(samples["uv"])
-                mask_list.append(samples["obj_mask"])
-                img_list.append(samples["rgb"])
-
-            uv = np.concatenate(uv_list, axis=0)
-            mask = np.concatenate(mask_list, axis=0)
-            img = np.concatenate(img_list, axis=0)
 
         batch = {
             "uv": uv.reshape(-1, 2).astype(np.float32),

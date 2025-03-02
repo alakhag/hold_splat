@@ -70,7 +70,7 @@ def parser_args():
     args.project = "blaze"
 
     data = np.load(f"./data/{args.case}/build/data.npy", allow_pickle=True).item()
-    opt.model.scene_bounding_sphere = data["scene_bounding_sphere"]
+    # opt.model.scene_bounding_sphere = data["scene_bounding_sphere"]
 
     if args.fast_dev_run:
         args.num_workers = 0

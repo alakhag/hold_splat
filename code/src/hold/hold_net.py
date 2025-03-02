@@ -8,7 +8,7 @@ from loguru import logger
 from src.model.renderables.background import BackgroundSplats
 from src.model.renderables.object_node import ObjectSplats
 from src.model.renderables.mano_node import MANOSplats
-from utils.eval_sh import RGB2SH, SH2RGB
+from src.utils.eval_sh import RGB2SH, SH2RGB
 
 sys.path = [".."] + sys.path
 from common.xdict import xdict
@@ -16,32 +16,31 @@ from common.xdict import xdict
 from gaussian_renderer import render
 from copy import deepcopy
 
-class SplatNet:
+class SplatNet(nn.Module):
     def __init__(
         self,
-        opt,
         betas_r,
         betas_l,
         num_frames,
         args,
     ):
-        super().__init__()
+        super(SplatNet, self).__init__()
         self.args = args
-        self.opt = opt
         self.threshold = 0.05
-        self.right_node = None
-        self.left_node = None
-        self.object_node = None
-        self.background = None
         node_dict = {}
         if betas_r is not None:
-            self.right_node = MANOSplats(betas_r, "right", args.n_images, args.case)
+            right_node = MANOSplats(betas_r, "right", args.n_images, args.case)
+            node_dict["right"] = right_node
 
         if betas_l is not None:
-            self.left_node = MANOSplats(betas_l, "left", args.n_images, args.case)
+            left_node = MANOSplats(betas_l, "left", args.n_images, args.case)
+            node_dict["left"] = left_node
 
-        self.object_node = ObjectSplats(args.case, "object", args.n_images)
-        self.bg_node = BackgroundSplats(args.case, "bg", args.n_images)
+        object_node = ObjectSplats(args.case, "object", args.n_images)
+        node_dict["object"] = object_node
+        bg_node = BackgroundSplats(args.case, "bg", args.n_images)
+        node_dict["bg"] = bg_node
+        self.nodes = nn.ModuleDict(node_dict)
 
     def forward(self, input):
         input = xdict(input)
@@ -54,13 +53,10 @@ class SplatNet:
         sample_dict = None
         factors_dicts = {}
         
-        factors = self.right_node(input)
-        factors_dicts["right"] = factors
-        factors = self.object_node(input)
-        factors_dicts["object"] = factors
-        factors = self.bg_node(input)
-        factors_dicts["bg"] = factors
-
+        for node in self.nodes.values():
+            factors = self.nodes[node.node_id](input)
+            factors_dicts[node.node_id] = factors
+        
         factors_dicts = self.merge(factors_dicts)
 
         rgb = self.render(factors_dicts["rgb"], override=False)
