@@ -21,23 +21,17 @@ def parser_args():
     parser.add_argument("--gpu_id", type=int, default=0)
     parser.add_argument("--log_every", type=int, default=10)
     parser.add_argument("--case", type=str, required=True)
-    parser.add_argument("--shape_init", type=str, default="75268d864")
     parser.add_argument("--mute", help="No logging", action="store_true")
     parser.add_argument("--agent_id", type=int, default=0)
-    parser.add_argument("--num_sample", type=int, default=128)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--exp_key", type=str, default="")
     parser.add_argument("--debug", action="store_true", help="debug mode")
     parser.add_argument("--num_epoch", type=int, default=200)
     parser.add_argument("--freeze_pose", action="store_true", help="no optimize pose")
-    parser.add_argument("--barf_s", type=int, default=1000)
-    parser.add_argument("--barf_e", type=int, default=10000)
-    parser.add_argument("--no_barf", action="store_true", help="no barf")
     parser.add_argument("--lr", type=float, default=0.0001)
     parser.add_argument("--offset", type=int, default=1)
     parser.add_argument("--no_meshing", action="store_true")
     parser.add_argument("--no_vis", action="store_true")
-    parser.add_argument("--render_downsample", type=int, default=2)
     parser.add_argument(
         "-f",
         "--fast",

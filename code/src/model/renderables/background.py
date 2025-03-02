@@ -2,21 +2,10 @@ import torch
 import torch.nn as nn
 from src.model.renderables.node import Splats
 
-
-class BackgroundDeformer:
-    def __init__(self):
-        pass
-
-class BackgroundServer:
-    def __init__(self):
-        pass
-
 class BackgroundSplats(Splats):
     def __init__(self, seq_name, node_id, num_frames):
-        deformer = BackgroundDeformer()
-        server = BackgroundServer()
         class_id = 0
-        super(ObjectSplats, self).__init__(deformer=deformer, server=server, node_id=node_id, class_id=class_id)
+        super(ObjectSplats, self).__init__(node_id=node_id, class_id=class_id)
         self.load_pcd()
         self.gen_from_pcd(num_frames)
 

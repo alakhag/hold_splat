@@ -8,6 +8,7 @@ from src.utils.meshing import generate_mesh
 import torch.nn as nn
 from src.model.obj.deformer import ObjectDeformer
 from src.model.obj.server import ObjectServer
+from src.model.obj.params import ObjectParams
 
 
 class ObjectSplats(Splats):
@@ -15,7 +16,16 @@ class ObjectSplats(Splats):
         deformer = ObjectDeformer()
         server = ObjectServer(seq_name, None)
         class_id = 1
-        super(ObjectSplats, self).__init__(deformer=deformer, server=server, node_id=node_id, class_id=class_id)
+        params = ObjectParams(
+            num_frames,
+            {
+                "global_orient": 3,
+                "transl": 3,
+            },
+            node_id,
+        )
+        params.load_params(seq_name)
+        super(ObjectSplats, self).__init__(deformer=deformer, server=server, node_id=node_id, class_id=class_id, params=params)
         self.load_pcd()
         self.gen_from_pcd(num_frames)
 

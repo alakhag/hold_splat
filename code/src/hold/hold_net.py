@@ -35,10 +35,10 @@ class SplatNet:
         self.background = None
         node_dict = {}
         if betas_r is not None:
-            self.right_node = MANOSplats(betas_r, "right", args.n_images)
+            self.right_node = MANOSplats(betas_r, "right", args.n_images, args.case)
 
         if betas_l is not None:
-            self.left_node = MANOSplats(betas_l, "left", args.n_images)
+            self.left_node = MANOSplats(betas_l, "left", args.n_images, args.case)
 
         self.object_node = ObjectSplats(args.case, "object", args.n_images)
         self.bg_node = BackgroundSplats(args.case, "bg", args.n_images)

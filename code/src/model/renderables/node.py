@@ -37,7 +37,8 @@ class Splats:
         server=None,
         deformer=None,
         node_id=None,
-        class_id=0
+        class_id=0,
+        params=None
     ):
         self.active_sh_degree = 0
         self.optimizer_type = optimizer_type
@@ -59,6 +60,8 @@ class Splats:
         self.server = server
         self.node_id = node_id
         self.class_id = class_id
+
+        self.params = params
 
         self.setup_functions()
 

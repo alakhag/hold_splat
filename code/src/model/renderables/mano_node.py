@@ -94,7 +94,7 @@ def rotmat_to_quat(rotmat: torch.Tensor) -> torch.Tensor:
     return quat
 
 class MANOSplats(Splats):
-    def __init__(self, betas, node_id, num_frames):
+    def __init__(self, betas, node_id, num_frames, seq_name):
         if node_id == "right":
             class_id = 2
             self.is_rhand = True
@@ -106,7 +106,20 @@ class MANOSplats(Splats):
 
         deformer = MANODeformer(max_dist=0.1, K=15, betas=betas, is_rhand=self.is_rhand)
         server = MANOServer(betas=betas, is_rhand=self.is_rhand)
-        super(MANOSplats, self).__init__(deformer=deformer, server=server, node_id=node_id, class_id=class_id)
+        from src.model.mano.params import MANOParams
+
+        params = MANOParams(
+            num_frames,
+            {
+                "betas": 10,
+                "global_orient": 3,
+                "transl": 3,
+                "pose": 45,
+            },
+            node_id,
+        )
+        params.load_params(seq_name)
+        super(MANOSplats, self).__init__(deformer=deformer, server=server, node_id=node_id, class_id=class_id, params=params)
         self.load_pcd()
         self.gen_from_pcd(num_frames)
 
